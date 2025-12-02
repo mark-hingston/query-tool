@@ -25,6 +25,11 @@ program
   .option("--dimensions <number>", "Embedding dimensions", "2560")
   .option("--top-k <number>", "Number of results to return", "10")
   .option(
+    "--enable-graph",
+    "Enable graph search (WARNING: slow startup with large indexes)",
+    false
+  )
+  .option(
     "--graph-threshold <number>",
     "Similarity threshold for graph queries",
     "0.7"
@@ -54,6 +59,7 @@ const config: ServerConfig = {
   tableName: options.tableName,
   dimensions: parseInt(options.dimensions),
   topK: parseInt(options.topK),
+  enableGraph: options.enableGraph || false,
   graphThreshold: parseFloat(options.graphThreshold),
   randomWalkSteps: parseInt(options.randomWalkSteps),
   restartProb: parseFloat(options.restartProb),
@@ -91,21 +97,22 @@ const openai = createOpenAI({
   baseURL: config.baseUrl,
 });
 
-// Initialize LanceDB - will be created async in main function
+// Initialize LanceDB and GraphRAG - will be created async in main function
 let lanceDb: LanceVectorStore | null = null;
+let graphRag: any | null = null;
 
 // Load graph store (if it exists)
 const graphStore = new GraphStore(config.indexPath);
 const hasGraphData = graphStore.load() && graphStore.hasData();
 
 if (hasGraphData) {
-  console.log("Graph data found and loaded");
+  console.error("Graph data found and loaded");
   const stats = graphStore.getStats();
   if (stats) {
-    console.log(`Graph contains ${stats.nodeCount} nodes`);
+    console.error(`Graph contains ${stats.nodeCount} nodes`);
   }
 } else {
-  console.log("No graph data found - graph search mode will not be available");
+  console.error("No graph data found - graph search mode will not be available");
 }
 
 // Create the query_index tool
@@ -135,43 +142,50 @@ const queryIndexTool = createTool({
     const { query, mode } = context;
 
     try {
+      console.error(`[Query] Received query: "${query.substring(0, 100)}${query.length > 100 ? '...' : ''}"`);
+      console.error(`[Query] Mode: ${mode}`);
+      
       // Determine which search mode to use
       let useGraph = false;
       if (mode === "graph") {
-        if (!hasGraphData) {
-          throw new Error("Graph search requested but no graph data available");
+        if (!graphRag) {
+          throw new Error("Graph search requested but graph is not initialized. Use --enable-graph to enable graph search.");
         }
         useGraph = true;
       } else if (mode === "auto") {
-        useGraph = hasGraphData;
+        // Only use graph if it's actually initialized
+        useGraph = graphRag !== null;
       }
 
+      console.error(`[Query] Search mode: ${useGraph ? 'graph' : 'vector'}`);
+
       // Generate query embedding
+      console.error(`[Query] Generating embedding for query...`);
+      const startEmbed = Date.now();
       const { embedding: queryEmbedding } = await embed({
         model: openai.embedding(config.model),
         value: query,
       });
+      console.error(`[Query] Embedding generated in ${Date.now() - startEmbed}ms`);
 
       let results: QueryResult[] = [];
 
       if (useGraph) {
         // Graph-based search
-        console.log("Using graph search mode");
-        const graphRag = graphStore.buildGraphRAG(
-          config.dimensions,
-          config.graphThreshold
-        );
-
+        console.error("[Query] Using graph search mode");
         if (!graphRag) {
-          throw new Error("Failed to build GraphRAG instance");
+          throw new Error("GraphRAG not initialized");
         }
 
+        console.error(`[Query] Querying graph with topK=${config.rerank ? config.topK * 5 : config.topK}, randomWalkSteps=${config.randomWalkSteps}...`);
+        const startGraph = Date.now();
         const graphResults = await graphRag.query({
           query: queryEmbedding,
           topK: config.rerank ? config.topK * 5 : config.topK,
           randomWalkSteps: config.randomWalkSteps,
           restartProb: config.restartProb,
         });
+        console.error(`[Query] Graph search completed in ${Date.now() - startGraph}ms, found ${graphResults.length} results`);
 
         results = graphResults.map((node: any) => ({
           text: node.content,
@@ -181,11 +195,13 @@ const queryIndexTool = createTool({
         }));
       } else {
         // Vector-based search
-        console.log("Using vector search mode");
+        console.error("[Query] Using vector search mode");
         if (!lanceDb) {
           throw new Error("LanceDB not initialized");
         }
 
+        console.error(`[Query] Querying vector store with topK=${config.rerank ? config.topK * 5 : config.topK}...`);
+        const startVector = Date.now();
         const vectorResults = await lanceDb.query({
           indexName: config.tableName,
           tableName: config.tableName,
@@ -193,6 +209,7 @@ const queryIndexTool = createTool({
           topK: config.rerank ? config.topK * 5 : config.topK,
           includeVector: false,
         });
+        console.error(`[Query] Vector search completed in ${Date.now() - startVector}ms, found ${vectorResults.length} results`);
 
         results = vectorResults.map((result: any) => ({
           text: result.document || result.text || "",
@@ -204,20 +221,63 @@ const queryIndexTool = createTool({
 
       // Apply reranking if enabled
       if (config.rerank && config.rerankModel) {
-        console.log("Applying reranking");
-        // Simple reranking by sorting - in production you'd use a reranker model
+        console.error(`[Query] Reranking ${results.length} results using model: ${config.rerankModel}`);
+        const startRerank = Date.now();
+        
+        // Use OpenAI-compatible reranking API
+        try {
+          const rerankResponse = await fetch(`${config.baseUrl}/rerank`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: config.rerankModel,
+              query: query,
+              documents: results.map(r => r.text),
+              top_n: config.topK,
+            }),
+          });
+
+          if (!rerankResponse.ok) {
+            throw new Error(`Reranking failed: ${rerankResponse.statusText}`);
+          }
+
+          const rerankData = await rerankResponse.json() as any;
+          console.error(`[Query] Reranking completed in ${Date.now() - startRerank}ms`);
+          
+          // Map reranked results back to original format
+          if (rerankData.results && Array.isArray(rerankData.results)) {
+            const rerankedResults = rerankData.results.map((r: any) => {
+              const originalResult = results[r.index];
+              return {
+                ...originalResult,
+                score: r.relevance_score || r.score || originalResult.score,
+              };
+            });
+            results = rerankedResults;
+          } else {
+            console.error("[Query] Reranking response format unexpected, falling back to score sorting");
+            results.sort((a, b) => b.score - a.score);
+            results = results.slice(0, config.topK);
+          }
+        } catch (rerankError) {
+          console.error(`[Query] Reranking error: ${rerankError}, falling back to score sorting`);
+          results.sort((a, b) => b.score - a.score);
+          results = results.slice(0, config.topK);
+        }
+      } else {
+        // Sort by score (highest first) if not reranking
         results.sort((a, b) => b.score - a.score);
-        results = results.slice(0, config.topK);
       }
 
-      // Sort by score (highest first)
-      results.sort((a, b) => b.score - a.score);
-
+      console.error(`[Query] Returning ${results.length} results`);
+      
       return {
         results,
       };
     } catch (error) {
-      console.error("Query error:", error);
+      console.error("[Query] Error:", error);
       throw error;
     }
   },
@@ -225,8 +285,30 @@ const queryIndexTool = createTool({
 
 // Main async function to initialize and start the server
 async function main() {
+  console.error("[Init] Initializing MCP server...");
+  
   // Initialize LanceDB
+  console.error("[Init] Connecting to LanceDB...");
+  const startLance = Date.now();
   lanceDb = await LanceVectorStore.create(lanceDbPath);
+  console.error(`[Init] LanceDB connected in ${Date.now() - startLance}ms`);
+
+  // Build GraphRAG once at startup if enabled and graph data exists
+  if (config.enableGraph && hasGraphData) {
+    console.error("[Init] Building GraphRAG instance (this may take several minutes for large indexes)...");
+    const startGraph = Date.now();
+    graphRag = graphStore.buildGraphRAG(
+      config.dimensions,
+      config.graphThreshold
+    );
+    if (graphRag) {
+      console.error(`[Init] GraphRAG built in ${Date.now() - startGraph}ms`);
+    } else {
+      console.warn("[Init] Failed to build GraphRAG, graph search will be disabled");
+    }
+  } else if (!config.enableGraph && hasGraphData) {
+    console.error("[Init] Graph data available but --enable-graph not specified, using vector search only");
+  }
 
   // Create MCP Server
   const server = new MCPServer({
@@ -239,14 +321,15 @@ async function main() {
     },
   });
 
-  console.log("Starting MCP server with stdio transport...");
-  console.log(`Index path: ${config.indexPath}`);
-  console.log(`Table name: ${config.tableName}`);
-  console.log(`Model: ${config.model}`);
-  console.log(`Dimensions: ${config.dimensions}`);
-  console.log(`Top K: ${config.topK}`);
-  console.log(`Graph available: ${hasGraphData}`);
-  console.log(`Reranking: ${config.rerank ? "enabled" : "disabled"}`);
+  console.error("\n=== MCP Server Ready ===");
+  console.error(`Index path: ${config.indexPath}`);
+  console.error(`Table name: ${config.tableName}`);
+  console.error(`Model: ${config.model}`);
+  console.error(`Dimensions: ${config.dimensions}`);
+  console.error(`Top K: ${config.topK}`);
+  console.error(`Graph available: ${hasGraphData && graphRag !== null}`);
+  console.error(`Reranking: ${config.rerank ? "enabled (" + config.rerankModel + ")" : "disabled"}`);
+  console.error("========================\n");
 
   // Start the server
   await server.startStdio();

@@ -240,6 +240,7 @@ export class GraphStore {
       throw new Error("Graph dimension not set");
     }
 
+    console.error(`[GraphStore] Creating GraphRAG with dimension=${dim}, threshold=${thresh}`);
     const graphRag = new GraphRAG(dim, thresh);
 
     // Load all chunks and embeddings from batches
@@ -247,14 +248,24 @@ export class GraphStore {
     const allChunks: GraphChunkData[] = [];
     const allEmbeddings: number[][] = [];
 
+    console.error(`[GraphStore] Loading ${this.index.chunkCount} nodes from ${totalBatches} batches...`);
+    const startLoad = Date.now();
+    
     for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+      if (batchNum % 5 === 0) {
+        console.error(`[GraphStore] Loading batch ${batchNum + 1}/${totalBatches}...`);
+      }
       const chunks = this.loadChunkBatch(batchNum);
       const embeddings = this.loadEmbeddingBatch(batchNum);
       allChunks.push(...chunks);
       allEmbeddings.push(...embeddings);
     }
+    
+    console.error(`[GraphStore] Loaded ${allChunks.length} chunks and ${allEmbeddings.length} embeddings in ${Date.now() - startLoad}ms`);
 
     // Convert to GraphRAG format
+    console.error(`[GraphStore] Converting to GraphRAG format...`);
+    const startConvert = Date.now();
     const graphChunks = allChunks.map((chunk) => ({
       text: chunk.text,
       metadata: {
@@ -267,9 +278,13 @@ export class GraphStore {
     const graphEmbeddings = allEmbeddings.map((emb) => ({
       vector: emb,
     }));
+    console.error(`[GraphStore] Conversion completed in ${Date.now() - startConvert}ms`);
 
     // Build the graph
+    console.error(`[GraphStore] Building graph structure (this may take a while)...`);
+    const startBuild = Date.now();
     graphRag.createGraph(graphChunks, graphEmbeddings);
+    console.error(`[GraphStore] Graph built in ${Date.now() - startBuild}ms`);
 
     return graphRag;
   }

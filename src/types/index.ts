@@ -39,6 +39,7 @@ export interface ServerConfig {
   topK: number;
 
   // Optional - Graph Settings
+  enableGraph: boolean;
   graphThreshold: number;
   randomWalkSteps: number;
   restartProb: number;

@@ -43,6 +43,11 @@ program
     "--restart-prob <number>",
     "Restart probability for graph random walk",
     "0.15"
+  )
+  .option(
+    "--verbose",
+    "Enable verbose logging output",
+    false
   );
 
 program.parse();
@@ -61,6 +66,14 @@ const config: ServerConfig = {
   graphThreshold: parseFloat(options.graphThreshold),
   randomWalkSteps: parseInt(options.randomWalkSteps),
   restartProb: parseFloat(options.restartProb),
+  verbose: options.verbose || false,
+};
+
+// Logging helper - only logs if verbose mode is enabled
+const log = (...args: any[]) => {
+  if (config.verbose) {
+    console.error(...args);
+  }
 };
 
 // Validation
@@ -69,15 +82,26 @@ if (!fs.existsSync(config.indexPath)) {
   process.exit(1);
 }
 
-// Check for LanceDB directory - try both possible names
-let lanceDbPath = path.join(config.indexPath, "embeddings.lance");
-if (!fs.existsSync(lanceDbPath)) {
-  // Try legacy name
-  lanceDbPath = path.join(config.indexPath, "lance");
-  if (!fs.existsSync(lanceDbPath)) {
+// Check for LanceDB directory - determine the correct table name
+// Note: Mastra's LanceDB automatically appends .lance to table names
+let lanceDbPath = config.indexPath;
+let actualTableName = config.tableName;
+
+// Check if embeddings.lance exists (standard name)
+const embeddingsLancePath = path.join(config.indexPath, "embeddings.lance");
+if (fs.existsSync(embeddingsLancePath)) {
+  // Use just "embeddings" - Mastra will append .lance automatically
+  actualTableName = "embeddings";
+} else {
+  // Try legacy name without .lance extension
+  const legacyPath = path.join(config.indexPath, "lance");
+  if (fs.existsSync(legacyPath)) {
+    // Remove .lance extension if present since Mastra adds it
+    actualTableName = "lance".replace(/\.lance$/, "");
+  } else {
     console.error(`Error: LanceDB directory not found at:`);
-    console.error(`  - ${path.join(config.indexPath, "embeddings.lance")}`);
-    console.error(`  - ${path.join(config.indexPath, "lance")}`);
+    console.error(`  - ${embeddingsLancePath}`);
+    console.error(`  - ${legacyPath}`);
     process.exit(1);
   }
 }
@@ -99,13 +123,13 @@ const graphStore = new GraphStore(config.indexPath);
 const hasGraphData = graphStore.load() && graphStore.hasData();
 
 if (hasGraphData) {
-  console.error("Graph data found and loaded");
+  log("Graph data found and loaded");
   const stats = graphStore.getStats();
   if (stats) {
-    console.error(`Graph contains ${stats.nodeCount} nodes`);
+    log(`Graph contains ${stats.nodeCount} nodes`);
   }
 } else {
-  console.error("No graph data found - graph search mode will not be available");
+  log("No graph data found - graph search mode will not be available");
 }
 
 // Create the query_index tool
@@ -131,12 +155,16 @@ const queryIndexTool = createTool({
       })
     ),
   }),
-  execute: async ({ context }: { context: QueryInput }) => {
-    const { query, mode } = context;
+  execute: async (executionContext) => {
+    log("[Query] Execute function called");
+    log("[Query] executionContext keys:", Object.keys(executionContext));
+    log("[Query] executionContext.context:", JSON.stringify(executionContext.context));
+
+    const { query, mode } = executionContext.context as QueryInput;
 
     try {
-      console.error(`[Query] Received query: "${query.substring(0, 100)}${query.length > 100 ? '...' : ''}"`);
-      console.error(`[Query] Mode: ${mode}`);
+      log(`[Query] Received query: "${query.substring(0, 100)}${query.length > 100 ? '...' : ''}"`);
+      log(`[Query] Mode: ${mode}`);
       
       // Determine which search mode to use
       let useGraph = false;
@@ -150,27 +178,27 @@ const queryIndexTool = createTool({
         useGraph = graphRag !== null;
       }
 
-      console.error(`[Query] Search mode: ${useGraph ? 'graph' : 'vector'}`);
+      log(`[Query] Search mode: ${useGraph ? 'graph' : 'vector'}`);
 
       // Generate query embedding
-      console.error(`[Query] Generating embedding for query...`);
+      log(`[Query] Generating embedding for query...`);
       const startEmbed = Date.now();
       const { embedding: queryEmbedding } = await embed({
         model: openai.embedding(config.model),
         value: query,
       });
-      console.error(`[Query] Embedding generated in ${Date.now() - startEmbed}ms`);
+      log(`[Query] Embedding generated in ${Date.now() - startEmbed}ms`);
 
       let results: QueryResult[] = [];
 
       if (useGraph) {
         // Graph-based search
-        console.error("[Query] Using graph search mode");
+        log("[Query] Using graph search mode");
         if (!graphRag) {
           throw new Error("GraphRAG not initialized");
         }
 
-        console.error(`[Query] Querying graph with topK=${config.topK}, randomWalkSteps=${config.randomWalkSteps}...`);
+        log(`[Query] Querying graph with topK=${config.topK}, randomWalkSteps=${config.randomWalkSteps}...`);
         const startGraph = Date.now();
         const graphResults = await graphRag.query({
           query: queryEmbedding,
@@ -178,7 +206,7 @@ const queryIndexTool = createTool({
           randomWalkSteps: config.randomWalkSteps,
           restartProb: config.restartProb,
         });
-        console.error(`[Query] Graph search completed in ${Date.now() - startGraph}ms, found ${graphResults.length} results`);
+        log(`[Query] Graph search completed in ${Date.now() - startGraph}ms, found ${graphResults.length} results`);
 
         results = graphResults.map((node: any) => ({
           text: node.content,
@@ -188,21 +216,21 @@ const queryIndexTool = createTool({
         }));
       } else {
         // Vector-based search
-        console.error("[Query] Using vector search mode");
+        log("[Query] Using vector search mode");
         if (!lanceDb) {
           throw new Error("LanceDB not initialized");
         }
 
-        console.error(`[Query] Querying vector store with topK=${config.topK}...`);
+        log(`[Query] Querying vector store with topK=${config.topK}...`);
         const startVector = Date.now();
         const vectorResults = await lanceDb.query({
-          indexName: config.tableName,
-          tableName: config.tableName,
+          indexName: actualTableName,
+          tableName: actualTableName,
           queryVector: queryEmbedding,
           topK: config.topK,
           includeVector: false,
         });
-        console.error(`[Query] Vector search completed in ${Date.now() - startVector}ms, found ${vectorResults.length} results`);
+        log(`[Query] Vector search completed in ${Date.now() - startVector}ms, found ${vectorResults.length} results`);
 
         results = vectorResults.map((result: any) => ({
           text: result.document || result.text || "",
@@ -215,43 +243,49 @@ const queryIndexTool = createTool({
       // Sort by score (highest first)
       results.sort((a, b) => b.score - a.score);
 
-      console.error(`[Query] Returning ${results.length} results`);
-      
-      return {
+      log(`[Query] Returning ${results.length} results`);
+
+      const returnValue = {
         results,
       };
+      log("[Query] Return value:", JSON.stringify(returnValue, null, 2));
+      return returnValue;
     } catch (error) {
       console.error("[Query] Error:", error);
-      throw error;
+      log("[Query] Error stack:", error instanceof Error ? error.stack : 'no stack');
+      // Ensure we return valid structure even on error
+      return {
+        results: [],
+      };
     }
   },
 });
 
 // Main async function to initialize and start the server
 async function main() {
-  console.error("[Init] Initializing MCP server...");
-  
+  log("[Init] Initializing MCP server...");
+
   // Initialize LanceDB
-  console.error("[Init] Connecting to LanceDB...");
+  log("[Init] Connecting to LanceDB...");
   const startLance = Date.now();
   lanceDb = await LanceVectorStore.create(lanceDbPath);
-  console.error(`[Init] LanceDB connected in ${Date.now() - startLance}ms`);
+  log(`[Init] LanceDB connected in ${Date.now() - startLance}ms`);
 
   // Build GraphRAG once at startup if enabled and graph data exists
   if (config.enableGraph && hasGraphData) {
-    console.error("[Init] Building GraphRAG instance (this may take several minutes for large indexes)...");
+    log("[Init] Building GraphRAG instance (this may take several minutes for large indexes)...");
     const startGraph = Date.now();
     graphRag = graphStore.buildGraphRAG(
       config.dimensions,
       config.graphThreshold
     );
     if (graphRag) {
-      console.error(`[Init] GraphRAG built in ${Date.now() - startGraph}ms`);
+      log(`[Init] GraphRAG built in ${Date.now() - startGraph}ms`);
     } else {
-      console.warn("[Init] Failed to build GraphRAG, graph search will be disabled");
+      console.error("[Init] Failed to build GraphRAG, graph search will be disabled");
     }
   } else if (!config.enableGraph && hasGraphData) {
-    console.error("[Init] Graph data available but --enable-graph not specified, using vector search only");
+    log("[Init] Graph data available but --enable-graph not specified, using vector search only");
   }
 
   // Create MCP Server
@@ -265,14 +299,16 @@ async function main() {
     },
   });
 
-  console.error("\n=== MCP Server Ready ===");
-  console.error(`Index path: ${config.indexPath}`);
-  console.error(`Table name: ${config.tableName}`);
-  console.error(`Model: ${config.model}`);
-  console.error(`Dimensions: ${config.dimensions}`);
-  console.error(`Top K: ${config.topK}`);
-  console.error(`Graph available: ${hasGraphData && graphRag !== null}`);
-  console.error("========================\n");
+  // Always show that server is ready (minimal output)
+  console.error("MCP Server Ready");
+
+  // Verbose details
+  log("Index path:", config.indexPath);
+  log("Table name:", actualTableName);
+  log("Model:", config.model);
+  log("Dimensions:", config.dimensions);
+  log("Top K:", config.topK);
+  log("Graph available:", hasGraphData && graphRag !== null);
 
   // Start the server
   await server.startStdio();

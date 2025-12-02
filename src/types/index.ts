@@ -43,6 +43,9 @@ export interface ServerConfig {
   graphThreshold: number;
   randomWalkSteps: number;
   restartProb: number;
+
+  // Optional - Logging Settings
+  verbose: boolean;
 }
 
 // Query tool input

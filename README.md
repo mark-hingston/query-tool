@@ -7,7 +7,6 @@ An MCP (Model Context Protocol) server for querying vector stores and knowledge 
 - **Vector Search**: Query LanceDB vector stores with semantic search
 - **Graph Search**: Query knowledge graphs built with GraphRAG for relationship-aware retrieval
 - **Auto Mode**: Automatically use graph search when available, fallback to vector search
-- **Reranking**: Optional reranking of results for improved relevance
 - **Stdio Transport**: Compatible with MCP clients like Claude Desktop, Cursor, and Windsurf
 
 ## Installation
@@ -39,10 +38,6 @@ npm run build
 - `--random-walk-steps <number>` - Steps for graph traversal (default: 100)
 - `--restart-prob <number>` - Restart probability for random walk (default: 0.15)
 
-**Reranking:**
-- `--rerank` - Enable reranking of results (off by default)
-- `--rerank-model <name>` - Reranker model name (required if --rerank is enabled)
-
 ### Example
 
 ```bash
@@ -50,9 +45,7 @@ node dist/index.js \
   --index-path ./embeddings \
   --base-url http://localhost:1234/v1 \
   --model text-embedding-model \
-  --top-k 5 \
-  --rerank \
-  --rerank-model gpt-4o-mini
+  --top-k 5
 ```
 
 ## MCP Tool: query_index
@@ -73,7 +66,7 @@ Returns an array of results sorted by score (highest first), each containing:
 
 - `text` - The chunk content
 - `source` - File path where the chunk originated
-- `score` - Similarity score (reranker score if reranking enabled, otherwise embedding similarity)
+- `score` - Similarity score (embedding similarity)
 - `chunkIndex` - Position of chunk within the source file
 
 ## Project Structure
@@ -100,7 +93,6 @@ query-tool-server/
    - Chooses search mode (vector or graph) based on the `mode` parameter
    - For vector search: queries LanceDB directly
    - For graph search: loads GraphRAG and performs random walk traversal
-   - Optionally fetches 5x results for reranking
    - Sorts results by score and returns top K
 
 ## Integration with Embedder
@@ -125,7 +117,6 @@ This server is designed to work with indexes created by the [embedder](../lance-
 The server validates on startup:
 - Index path exists
 - LanceDB table exists
-- If `--rerank` is provided, `--rerank-model` must also be provided
 - If graph search is requested, graph data must be available
 
 All errors are returned as MCP error responses with descriptive messages.

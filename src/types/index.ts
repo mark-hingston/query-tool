@@ -43,10 +43,6 @@ export interface ServerConfig {
   graphThreshold: number;
   randomWalkSteps: number;
   restartProb: number;
-
-  // Optional - Reranking
-  rerank: boolean;
-  rerankModel?: string;
 }
 
 // Query tool input

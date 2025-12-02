@@ -43,9 +43,7 @@ program
     "--restart-prob <number>",
     "Restart probability for graph random walk",
     "0.15"
-  )
-  .option("--rerank", "Enable reranking of results", false)
-  .option("--rerank-model <name>", "Reranker model name");
+  );
 
 program.parse();
 
@@ -63,8 +61,6 @@ const config: ServerConfig = {
   graphThreshold: parseFloat(options.graphThreshold),
   randomWalkSteps: parseInt(options.randomWalkSteps),
   restartProb: parseFloat(options.restartProb),
-  rerank: options.rerank,
-  rerankModel: options.rerankModel,
 };
 
 // Validation
@@ -86,10 +82,7 @@ if (!fs.existsSync(lanceDbPath)) {
   }
 }
 
-if (config.rerank && !config.rerankModel) {
-  console.error("Error: --rerank-model is required when --rerank is enabled");
-  process.exit(1);
-}
+
 
 // Initialize OpenAI client for embeddings
 const openai = createOpenAI({
@@ -177,11 +170,11 @@ const queryIndexTool = createTool({
           throw new Error("GraphRAG not initialized");
         }
 
-        console.error(`[Query] Querying graph with topK=${config.rerank ? config.topK * 5 : config.topK}, randomWalkSteps=${config.randomWalkSteps}...`);
+        console.error(`[Query] Querying graph with topK=${config.topK}, randomWalkSteps=${config.randomWalkSteps}...`);
         const startGraph = Date.now();
         const graphResults = await graphRag.query({
           query: queryEmbedding,
-          topK: config.rerank ? config.topK * 5 : config.topK,
+          topK: config.topK,
           randomWalkSteps: config.randomWalkSteps,
           restartProb: config.restartProb,
         });
@@ -200,13 +193,13 @@ const queryIndexTool = createTool({
           throw new Error("LanceDB not initialized");
         }
 
-        console.error(`[Query] Querying vector store with topK=${config.rerank ? config.topK * 5 : config.topK}...`);
+        console.error(`[Query] Querying vector store with topK=${config.topK}...`);
         const startVector = Date.now();
         const vectorResults = await lanceDb.query({
           indexName: config.tableName,
           tableName: config.tableName,
           queryVector: queryEmbedding,
-          topK: config.rerank ? config.topK * 5 : config.topK,
+          topK: config.topK,
           includeVector: false,
         });
         console.error(`[Query] Vector search completed in ${Date.now() - startVector}ms, found ${vectorResults.length} results`);
@@ -219,57 +212,8 @@ const queryIndexTool = createTool({
         }));
       }
 
-      // Apply reranking if enabled
-      if (config.rerank && config.rerankModel) {
-        console.error(`[Query] Reranking ${results.length} results using model: ${config.rerankModel}`);
-        const startRerank = Date.now();
-        
-        // Use OpenAI-compatible reranking API
-        try {
-          const rerankResponse = await fetch(`${config.baseUrl}/rerank`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: config.rerankModel,
-              query: query,
-              documents: results.map(r => r.text),
-              top_n: config.topK,
-            }),
-          });
-
-          if (!rerankResponse.ok) {
-            throw new Error(`Reranking failed: ${rerankResponse.statusText}`);
-          }
-
-          const rerankData = await rerankResponse.json() as any;
-          console.error(`[Query] Reranking completed in ${Date.now() - startRerank}ms`);
-          
-          // Map reranked results back to original format
-          if (rerankData.results && Array.isArray(rerankData.results)) {
-            const rerankedResults = rerankData.results.map((r: any) => {
-              const originalResult = results[r.index];
-              return {
-                ...originalResult,
-                score: r.relevance_score || r.score || originalResult.score,
-              };
-            });
-            results = rerankedResults;
-          } else {
-            console.error("[Query] Reranking response format unexpected, falling back to score sorting");
-            results.sort((a, b) => b.score - a.score);
-            results = results.slice(0, config.topK);
-          }
-        } catch (rerankError) {
-          console.error(`[Query] Reranking error: ${rerankError}, falling back to score sorting`);
-          results.sort((a, b) => b.score - a.score);
-          results = results.slice(0, config.topK);
-        }
-      } else {
-        // Sort by score (highest first) if not reranking
-        results.sort((a, b) => b.score - a.score);
-      }
+      // Sort by score (highest first)
+      results.sort((a, b) => b.score - a.score);
 
       console.error(`[Query] Returning ${results.length} results`);
       
@@ -328,7 +272,6 @@ async function main() {
   console.error(`Dimensions: ${config.dimensions}`);
   console.error(`Top K: ${config.topK}`);
   console.error(`Graph available: ${hasGraphData && graphRag !== null}`);
-  console.error(`Reranking: ${config.rerank ? "enabled (" + config.rerankModel + ")" : "disabled"}`);
   console.error("========================\n");
 
   // Start the server

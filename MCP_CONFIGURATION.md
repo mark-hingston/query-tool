@@ -61,27 +61,6 @@ If you have GraphRAG data (created with `embedder --enable-graph`):
 }
 ```
 
-## With Reranking
-
-To enable reranking for better results:
-
-```json
-{
-  "query-tool": {
-    "command": "node",
-    "args": [
-      "/path/to/query-tool-server/dist/index.js",
-      "--index-path", "/path/to/your/embeddings",
-      "--base-url", "http://localhost:1234/v1",
-      "--model", "text-embedding-model",
-      "--rerank",
-      "--rerank-model", "gpt-4o-mini",
-      "--top-k", "10"
-    ]
-  }
-}
-```
-
 ## Using with Mastra MCPClient
 
 If you want to use this server programmatically:
@@ -133,8 +112,7 @@ Example queries:
 The tool will automatically:
 1. Generate an embedding for your query
 2. Search the vector store (or graph if available)
-3. Optionally rerank results
-4. Return the most relevant code chunks
+3. Return the most relevant code chunks
 
 Each result includes:
 - `text` - The code or text content

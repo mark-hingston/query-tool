@@ -44,7 +44,6 @@ Model: text-embedding-model
 Dimensions: 2560
 Top K: 10
 Graph available: true
-Reranking: disabled
 ```
 
 ## Step 4: Configure Your MCP Client
@@ -97,19 +96,6 @@ embedder -d ./my-repo -o ./embeddings --enable-graph
 ```
 
 Then start the query server normally - it will detect and use the graph data automatically.
-
-### Enable Reranking
-
-For better result quality, enable reranking:
-
-```bash
-node dist/index.js \
-  --index-path /path/to/your/embeddings \
-  --base-url http://localhost:1234/v1 \
-  --model text-embedding-model \
-  --rerank \
-  --rerank-model gpt-4o-mini
-```
 
 ### Customize Search Parameters
 

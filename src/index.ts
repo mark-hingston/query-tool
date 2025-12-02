@@ -300,7 +300,7 @@ async function main() {
   });
 
   // Always show that server is ready (minimal output)
-  console.error("MCP Server Ready");
+  console.info("MCP Server Ready");
 
   // Verbose details
   log("Index path:", config.indexPath);

@@ -1,6 +1,6 @@
 # Embeddings Query Server
 
-An MCP (Model Context Protocol) server for querying vector stores and knowledge graphs created by the [embedder](../lance-embedder) project.
+An MCP (Model Context Protocol) server for querying vector stores and knowledge graphs created by the [lance-embedder](https://github.com/mark-hingston/lance-embedder) project.
 
 ## Features
 

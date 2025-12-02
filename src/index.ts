@@ -229,6 +229,7 @@ const queryIndexTool = createTool({
           queryVector: queryEmbedding,
           topK: config.topK,
           includeVector: false,
+          includeAllColumns: true, // IMPORTANT: Include metadata fields
         });
         log(`[Query] Vector search completed in ${Date.now() - startVector}ms, found ${vectorResults.length} results`);
 

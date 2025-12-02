@@ -233,8 +233,8 @@ const queryIndexTool = createTool({
         log(`[Query] Vector search completed in ${Date.now() - startVector}ms, found ${vectorResults.length} results`);
 
         results = vectorResults.map((result: any) => ({
-          text: result.metadata_text || result.text || "",
-          source: result.metadata_source || result.source || "",
+          text: result.metadata?.text || result.metadata_text || result.text || "",
+          source: result.metadata?.source || result.metadata_source || result.source || "",
           score: result.score || 0,
           chunkIndex: 0, // chunkIndex is not stored in vector DB, only in graph data
         }));

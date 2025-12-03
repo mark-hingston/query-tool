@@ -32,6 +32,7 @@ export interface ServerConfig {
   model: string;
 
   // Optional - Index Settings
+  indexName?: string;
   tableName: string;
   dimensions: number;
 

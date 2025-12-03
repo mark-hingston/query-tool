@@ -9,13 +9,14 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 ```json
 {
   "mcpServers": {
-    "query-tool": {
+    "my-codebase": {
       "command": "node",
       "args": [
         "/path/to/query-tool-server/dist/index.js",
         "--index-path", "/path/to/your/embeddings",
         "--base-url", "http://localhost:1234/v1",
         "--model", "text-embedding-model",
+        "--index-name", "my-codebase",
         "--top-k", "5"
       ]
     }
@@ -23,19 +24,22 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
+**Note:** The `--index-name` parameter helps LLMs understand what index they're querying. It's displayed in the server name and description.
+
 ## Cursor / Windsurf
 
 Add to your MCP settings:
 
 ```json
 {
-  "query-tool": {
+  "my-codebase": {
     "command": "node",
     "args": [
       "/path/to/query-tool-server/dist/index.js",
       "--index-path", "/path/to/your/embeddings",
       "--base-url", "http://localhost:1234/v1",
-      "--model", "text-embedding-model"
+      "--model", "text-embedding-model",
+      "--index-name", "my-codebase"
     ]
   }
 }
@@ -47,19 +51,64 @@ If you have GraphRAG data (created with `embedder --enable-graph`):
 
 ```json
 {
-  "query-tool": {
+  "my-docs": {
     "command": "node",
     "args": [
       "/path/to/query-tool-server/dist/index.js",
       "--index-path", "/path/to/your/embeddings",
       "--base-url", "http://localhost:1234/v1",
       "--model", "text-embedding-model",
+      "--index-name", "my-docs",
+      "--enable-graph",
       "--graph-threshold", "0.75",
       "--random-walk-steps", "150"
     ]
   }
 }
 ```
+
+## Multiple Indexes
+
+You can run multiple instances of the query server, each pointing to different indexes:
+
+```json
+{
+  "mcpServers": {
+    "frontend-codebase": {
+      "command": "node",
+      "args": [
+        "/path/to/query-tool-server/dist/index.js",
+        "--index-path", "/path/to/frontend/embeddings",
+        "--base-url", "http://localhost:1234/v1",
+        "--model", "text-embedding-model",
+        "--index-name", "frontend-codebase"
+      ]
+    },
+    "backend-codebase": {
+      "command": "node",
+      "args": [
+        "/path/to/query-tool-server/dist/index.js",
+        "--index-path", "/path/to/backend/embeddings",
+        "--base-url", "http://localhost:1234/v1",
+        "--model", "text-embedding-model",
+        "--index-name", "backend-codebase"
+      ]
+    },
+    "documentation": {
+      "command": "node",
+      "args": [
+        "/path/to/query-tool-server/dist/index.js",
+        "--index-path", "/path/to/docs/embeddings",
+        "--base-url", "http://localhost:1234/v1",
+        "--model", "text-embedding-model",
+        "--index-name", "documentation"
+      ]
+    }
+  }
+}
+```
+
+The LLM will see each server with its descriptive name (e.g., "frontend-codebase Query Server") and understand which index to query for different tasks.
 
 ## Using with Mastra MCPClient
 
@@ -72,13 +121,14 @@ import { openai } from "@ai-sdk/openai";
 
 const mcp = new MCPClient({
   servers: {
-    embeddings: {
+    codebase: {
       command: "node",
       args: [
         "/path/to/query-tool-server/dist/index.js",
         "--index-path", "/path/to/your/embeddings",
         "--base-url", "http://localhost:1234/v1",
         "--model", "text-embedding-model",
+        "--index-name", "my-codebase",
       ],
     },
   },

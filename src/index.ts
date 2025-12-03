@@ -21,6 +21,7 @@ program
   .requiredOption("--index-path <path>", "Path to the embeddings directory")
   .requiredOption("--base-url <url>", "LM Studio base URL for embeddings")
   .requiredOption("--model <name>", "Embedding model name")
+  .option("--index-name <name>", "Descriptive name for this index (e.g., 'my-codebase', 'documentation')")
   .option("--table-name <name>", "LanceDB table name", "embeddings")
   .option("--dimensions <number>", "Embedding dimensions", "2560")
   .option("--top-k <number>", "Number of results to return", "10")
@@ -59,6 +60,7 @@ const config: ServerConfig = {
   indexPath: options.indexPath,
   baseUrl: options.baseUrl,
   model: options.model,
+  indexName: options.indexName,
   tableName: options.tableName,
   dimensions: parseInt(options.dimensions),
   topK: parseInt(options.topK),
@@ -132,10 +134,10 @@ if (hasGraphData) {
   log("No graph data found - graph search mode will not be available");
 }
 
-// Create the query_index tool
+// Create the query_index tool - note: description will be static, but server description is dynamic
 const queryIndexTool = createTool({
   id: "query_index",
-  description: "Search the indexed embeddings using vector or graph-based search",
+  description: "Search indexed embeddings using vector or graph-based search. Check the server description to see which index this queries.",
   inputSchema: z.object({
     query: z.string().describe("The search query text"),
     mode: z
@@ -289,12 +291,19 @@ async function main() {
     log("[Init] Graph data available but --enable-graph not specified, using vector search only");
   }
 
-  // Create MCP Server
+  // Create MCP Server with dynamic name/description based on index
+  const serverName = config.indexName 
+    ? `${config.indexName} Query Server`
+    : "Embeddings Query Server";
+  
+  const serverDescription = config.indexName
+    ? `Query the '${config.indexName}' index using vector or graph-based search. This index contains embeddings created from source documents.`
+    : "Query vector stores and knowledge graphs created by the embedder";
+
   const server = new MCPServer({
-    name: "Embeddings Query Server",
+    name: serverName,
     version: "1.0.0",
-    description:
-      "Query vector stores and knowledge graphs created by the embedder",
+    description: serverDescription,
     tools: {
       query_index: queryIndexTool,
     },

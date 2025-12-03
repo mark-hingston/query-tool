@@ -41,7 +41,7 @@ Starting MCP server with stdio transport...
 Index path: /path/to/your/embeddings
 Table name: embeddings
 Model: text-embedding-model
-Dimensions: 2560
+Dimensions: 1024
 Top K: 10
 Graph available: true
 ```

@@ -28,7 +28,7 @@ npm run build
 
 **Index Settings:**
 - `--table-name <name>` - LanceDB table name (default: "embeddings")
-- `--dimensions <number>` - Embedding dimensions (default: 2560)
+- `--dimensions <number>` - Embedding dimensions (default: 1024)
 
 **Query Settings:**
 - `--top-k <number>` - Number of results to return (default: 10)

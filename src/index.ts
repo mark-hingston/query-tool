@@ -23,7 +23,7 @@ program
   .requiredOption("--model <name>", "Embedding model name")
   .option("--index-name <name>", "Descriptive name for this index (e.g., 'my-codebase', 'documentation')")
   .option("--table-name <name>", "LanceDB table name", "embeddings")
-  .option("--dimensions <number>", "Embedding dimensions", "2560")
+  .option("--dimensions <number>", "Embedding dimensions", "1024")
   .option("--top-k <number>", "Number of results to return", "10")
   .option(
     "--enable-graph",

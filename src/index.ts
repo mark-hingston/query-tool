@@ -9,7 +9,7 @@ import { LanceVectorStore } from "@mastra/lance";
 import * as fs from "fs";
 import * as path from "path";
 import type { ServerConfig, QueryInput, QueryResult } from "./types/index.js";
-import { GraphStore } from "./lib/graph-store.js";
+import { GraphStore, GraphBuildState } from "./lib/graph-store.js";
 
 // Parse command line arguments
 const program = new Command();
@@ -46,6 +46,11 @@ program
     "0.15"
   )
   .option(
+    "--preload-graph",
+    "Start building graph in background at startup (still allows immediate queries via vector search)",
+    false
+  )
+  .option(
     "--verbose",
     "Enable verbose logging output",
     false
@@ -68,6 +73,7 @@ const config: ServerConfig = {
   graphThreshold: parseFloat(options.graphThreshold),
   randomWalkSteps: parseInt(options.randomWalkSteps),
   restartProb: parseFloat(options.restartProb),
+  preloadGraph: options.preloadGraph || false,
   verbose: options.verbose || false,
 };
 
@@ -118,9 +124,8 @@ const openai = createOpenAI({
 
 // Initialize LanceDB and GraphRAG - will be created async in main function
 let lanceDb: LanceVectorStore | null = null;
-let graphRag: any | null = null;
 
-// Load graph store (if it exists)
+// Load graph store (if it exists) - but don't build the graph yet (lazy loading)
 const graphStore = new GraphStore(config.indexPath);
 const hasGraphData = graphStore.load() && graphStore.hasData();
 
@@ -129,6 +134,11 @@ if (hasGraphData) {
   const stats = graphStore.getStats();
   if (stats) {
     log(`Graph contains ${stats.nodeCount} nodes`);
+  }
+  if (config.enableGraph) {
+    log("Graph search enabled - graph will be built on first query (lazy loading)");
+  } else {
+    log("Graph search disabled - use --enable-graph to enable");
   }
 } else {
   log("No graph data found - graph search mode will not be available");
@@ -170,14 +180,45 @@ const queryIndexTool = createTool({
       
       // Determine which search mode to use
       let useGraph = false;
+      let graphInstance: any | null = null;
+
       if (mode === "graph") {
-        if (!graphRag) {
-          throw new Error("Graph search requested but graph is not initialized. Use --enable-graph to enable graph search.");
+        if (!config.enableGraph || !hasGraphData) {
+          throw new Error("Graph search requested but graph is not available. Use --enable-graph and ensure graph data exists.");
         }
         useGraph = true;
       } else if (mode === "auto") {
-        // Only use graph if it's actually initialized
-        useGraph = graphRag !== null;
+        // Only use graph if enabled and data exists
+        useGraph = config.enableGraph && hasGraphData;
+      }
+
+      // If we want to use graph, try to get/build it
+      if (useGraph) {
+        const graphState = graphStore.getGraphState();
+        log(`[Query] Graph state: ${graphState}`);
+
+        if (graphState === GraphBuildState.BUILDING) {
+          console.warn("[Query] WARNING: Graph is still building. Falling back to vector search for this query.");
+          log("[Query] To avoid this warning, wait for graph to finish building before querying.");
+          useGraph = false;
+        } else if (graphState === GraphBuildState.FAILED) {
+          console.warn("[Query] WARNING: Graph build failed previously. Falling back to vector search.");
+          useGraph = false;
+        } else {
+          // Try to get or build the graph (lazy loading)
+          log("[Query] Getting or building graph instance (lazy loading)...");
+          const startGetGraph = Date.now();
+          graphInstance = await graphStore.getOrBuildGraphRAG(
+            config.dimensions,
+            config.graphThreshold
+          );
+          log(`[Query] Graph ready in ${Date.now() - startGetGraph}ms`);
+
+          if (!graphInstance) {
+            console.warn("[Query] WARNING: Failed to get graph instance. Falling back to vector search.");
+            useGraph = false;
+          }
+        }
       }
 
       log(`[Query] Search mode: ${useGraph ? 'graph' : 'vector'}`);
@@ -193,16 +234,13 @@ const queryIndexTool = createTool({
 
       let results: QueryResult[] = [];
 
-      if (useGraph) {
+      if (useGraph && graphInstance) {
         // Graph-based search
         log("[Query] Using graph search mode");
-        if (!graphRag) {
-          throw new Error("GraphRAG not initialized");
-        }
 
         log(`[Query] Querying graph with topK=${config.topK}, randomWalkSteps=${config.randomWalkSteps}...`);
         const startGraph = Date.now();
-        const graphResults = await graphRag.query({
+        const graphResults = await graphInstance.query({
           query: queryEmbedding,
           topK: config.topK,
           randomWalkSteps: config.randomWalkSteps,
@@ -274,18 +312,20 @@ async function main() {
   lanceDb = await LanceVectorStore.create(lanceDbPath);
   log(`[Init] LanceDB connected in ${Date.now() - startLance}ms`);
 
-  // Build GraphRAG once at startup if enabled and graph data exists
+  // Note: GraphRAG is now built lazily on first query (if enabled)
+  // This dramatically improves startup time for large indexes
   if (config.enableGraph && hasGraphData) {
-    log("[Init] Building GraphRAG instance (this may take several minutes for large indexes)...");
-    const startGraph = Date.now();
-    graphRag = graphStore.buildGraphRAG(
-      config.dimensions,
-      config.graphThreshold
-    );
-    if (graphRag) {
-      log(`[Init] GraphRAG built in ${Date.now() - startGraph}ms`);
-    } else {
-      console.error("[Init] Failed to build GraphRAG, graph search will be disabled");
+    log("[Init] Graph search enabled - graph will be built on first query (lazy loading)");
+    
+    // Optionally start building in the background
+    if (config.preloadGraph) {
+      log("[Init] Starting graph preload in background...");
+      // Trigger lazy loading asynchronously without blocking startup
+      graphStore.getOrBuildGraphRAG(config.dimensions, config.graphThreshold).then(() => {
+        log("[Init] Graph preload completed");
+      }).catch((error) => {
+        console.error("[Init] Graph preload failed:", error);
+      });
     }
   } else if (!config.enableGraph && hasGraphData) {
     log("[Init] Graph data available but --enable-graph not specified, using vector search only");
@@ -318,7 +358,7 @@ async function main() {
   log("Model:", config.model);
   log("Dimensions:", config.dimensions);
   log("Top K:", config.topK);
-  log("Graph available:", hasGraphData && graphRag !== null);
+  log("Graph available:", hasGraphData && config.enableGraph);
 
   // Start the server
   await server.startStdio();

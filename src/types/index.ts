@@ -44,6 +44,7 @@ export interface ServerConfig {
   graphThreshold: number;
   randomWalkSteps: number;
   restartProb: number;
+  preloadGraph: boolean;
 
   // Optional - Logging Settings
   verbose: boolean;

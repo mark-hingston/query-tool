@@ -51,6 +51,10 @@ program
     false
   )
   .option(
+    "--batch-size <number>",
+    "Batch size for loading chunks/embeddings (default: adaptive based on dataset size)",
+  )
+  .option(
     "--verbose",
     "Enable verbose logging output",
     false
@@ -74,6 +78,7 @@ const config: ServerConfig = {
   randomWalkSteps: parseInt(options.randomWalkSteps),
   restartProb: parseFloat(options.restartProb),
   preloadGraph: options.preloadGraph || false,
+  batchSize: options.batchSize ? parseInt(options.batchSize) : undefined,
   verbose: options.verbose || false,
 };
 
@@ -126,8 +131,8 @@ const openai = createOpenAI({
 let lanceDb: LanceVectorStore | null = null;
 
 // Load graph store (if it exists) - but don't build the graph yet (lazy loading)
-const graphStore = new GraphStore(config.indexPath);
-const hasGraphData = graphStore.load() && graphStore.hasData();
+const graphStore = new GraphStore(config.indexPath, config.batchSize);
+const hasGraphData = graphStore.load(config.batchSize) && graphStore.hasData();
 
 if (hasGraphData) {
   log("Graph data found and loaded");
@@ -320,8 +325,14 @@ async function main() {
     // Optionally start building in the background
     if (config.preloadGraph) {
       log("[Init] Starting graph preload in background...");
-      // Trigger lazy loading asynchronously without blocking startup
-      graphStore.getOrBuildGraphRAG(config.dimensions, config.graphThreshold).then(() => {
+      
+      // First, pre-warm the file system cache for faster loading
+      graphStore.prewarmFileCache().then(() => {
+        log("[Init] File cache pre-warmed");
+        
+        // Then trigger lazy loading asynchronously without blocking startup
+        return graphStore.getOrBuildGraphRAG(config.dimensions, config.graphThreshold);
+      }).then(() => {
         log("[Init] Graph preload completed");
       }).catch((error) => {
         console.error("[Init] Graph preload failed:", error);

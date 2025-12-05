@@ -39,14 +39,21 @@ function decodeEmbeddings(buffer: Buffer, dimension: number): number[][] {
   const count = buffer.readUInt32LE(offset);
   offset += 4;
 
-  const embeddings: number[][] = [];
+  // Pre-allocate the outer array for better performance
+  const embeddings: number[][] = new Array(count);
+  
+  // Use Float32Array for faster memory access and better cache locality
+  const totalFloats = count * dimension;
+  const floatView = new Float32Array(buffer.buffer, buffer.byteOffset + 4, totalFloats);
+  
   for (let i = 0; i < count; i++) {
-    const embedding: number[] = [];
+    // Pre-allocate inner array and copy slice from typed array
+    const embedding = new Array(dimension);
+    const baseIdx = i * dimension;
     for (let j = 0; j < dimension; j++) {
-      embedding.push(buffer.readFloatLE(offset));
-      offset += 4;
+      embedding[j] = floatView[baseIdx + j];
     }
-    embeddings.push(embedding);
+    embeddings[i] = embedding;
   }
 
   return embeddings;

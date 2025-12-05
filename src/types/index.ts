@@ -45,6 +45,7 @@ export interface ServerConfig {
   randomWalkSteps: number;
   restartProb: number;
   preloadGraph: boolean;
+  batchSize?: number; // Batch size for loading chunks/embeddings (default: adaptive based on dataset size)
 
   // Optional - Logging Settings
   verbose: boolean;
